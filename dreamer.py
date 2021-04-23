@@ -38,8 +38,7 @@ def define_config():
   config.gpu_growth = True
   config.precision = 16
   # Environment.
-  #config.task = 'dmc_walker_walk'
-  config.task = 'minigrid_MiniGrid-Empty-5x5-v0'
+  config.task = 'dmc_walker_walk'
   config.envs = 1
   config.parallel = 'none'
   config.action_repeat = 2
@@ -75,17 +74,13 @@ def define_config():
   config.discount = 0.99
   config.disclam = 0.95
   config.horizon = 15
-  #config.action_dist = 'tanh_normal'
-  config.action_dist = 'onehot'
+  config.action_dist = 'tanh_normal'
   config.action_init_std = 5.0
-  #config.expl = 'additive_gaussian'
-  config.expl = 'epsilon_greedy'
+  config.expl = 'additive_gaussian'
   config.expl_amount = 0.3
   config.expl_decay = 0.0
   config.expl_min = 0.0
 
-  # Jsik
-  config.partial_view = 1
   return config
 
 
@@ -392,7 +387,7 @@ def make_env(config, writer, prefix, datadir, store):
     env = wrappers.OneHotAction(env)
   elif suite == 'minigrid':
     env = wrappers.GymGridEnv(
-        task, config.action_repeat, config.partial_view, life_done=False)
+        task, config.action_repeat, life_done=False)
     env = wrappers.OneHotAction(env)
   else:
     raise NotImplementedError(suite)
@@ -438,6 +433,7 @@ def main(config):
   random_agent = lambda o, d, _: ([actspace.sample() for _ in d], None)
   tools.simulate(random_agent, train_envs, prefill / config.action_repeat)
   writer.flush()
+  print('done');exit(1)
 
   # Train and regularly evaluate the agent.
   step = count_steps(datadir, config)

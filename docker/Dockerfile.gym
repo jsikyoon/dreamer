@@ -22,6 +22,7 @@ RUN git clone https://github.com/jsikyoon/my_ubuntu_settings --branch indent2 &&
 
 RUN apt install -y libgl1-mesa-glx ffmpeg
 
-RUN pip install tensorflow_probability==0.9.0 dm_control pandas matplotlib && \
+RUN pip install tensorflow_probability==0.10.1 dm_control pandas matplotlib && \
     pip install gym && \
-    pip install gym[atari]
+    pip install gym[atari] && \
+    pip install gym_minigrid
