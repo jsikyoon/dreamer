@@ -5,10 +5,10 @@ from datetime import datetime
 ###############################################################################
 # Params
 ###############################################################################
-img_name = 'dreamer'
+img_name = 'dreamer:dmlab'
 
 ## gpu
-gpu_id = '0'
+gpu_ids = ['5']
 
 ###############################################################################
 # Volumn options
@@ -23,17 +23,21 @@ volumn_options = " ".join(volumn_options) + " "
 # Run
 ###############################################################################
 
-cont_name = 'development'
+#cont_name = 'development'
 
 command = 'docker run -it --rm '
+#command = 'docker create -it '
 command += volumn_options
 command += \
     '--device=/dev/nvidiactl --device=/dev/nvidia-uvm --runtime nvidia '
-command += '--device=/dev/nvidia'+gpu_id+' '
-command += '-e NVIDIA_VISIBLE_DEVICES='+gpu_id+' '
-command += '--name '+cont_name+' '
+for gpu_id in gpu_ids:
+  command += '--device=/dev/nvidia'+gpu_id+' '
+  command += '-e NVIDIA_VISIBLE_DEVICES='+gpu_id+' '
+#command += '--name '+cont_name+' '
 command += img_name
 command += ' /bin/bash'
 print(command)
 os.system(command)
+
+#os.system('docker start development')
 

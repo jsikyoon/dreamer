@@ -389,6 +389,10 @@ def make_env(config, writer, prefix, datadir, store):
     env = wrappers.GymGridEnv(
         task, config.action_repeat, life_done=False)
     env = wrappers.OneHotAction(env)
+  elif suite == 'dmlab':
+    env = wrappers.DeepMindLabyrinth(
+        task, prefix, config.action_repeat)
+    env = wrappers.OneHotAction(env)
   else:
     raise NotImplementedError(suite)
   env = wrappers.TimeLimit(env, config.time_limit / config.action_repeat)
@@ -433,7 +437,6 @@ def main(config):
   random_agent = lambda o, d, _: ([actspace.sample() for _ in d], None)
   tools.simulate(random_agent, train_envs, prefill / config.action_repeat)
   writer.flush()
-  print('done');exit(1)
 
   # Train and regularly evaluate the agent.
   step = count_steps(datadir, config)
