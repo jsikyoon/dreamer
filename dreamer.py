@@ -80,6 +80,13 @@ def define_config():
   config.expl_amount = 0.3
   config.expl_decay = 0.0
   config.expl_min = 0.0
+  # RSSM model
+  config.rssm_model = 'gru'
+  config.pre_lnorm = False
+  config.gate = 'plus'
+  config.n_layer = 2
+  config.n_head = 10
+  config.mem_len = 64
 
   return config
 
@@ -220,7 +227,10 @@ class Dreamer(tools.Module):
     act = acts[self._c.dense_act]
     self._encode = models.ConvEncoder(self._c.cnn_depth, cnn_act)
     self._dynamics = models.RSSM(
-        self._c.stoch_size, self._c.deter_size, self._c.deter_size)
+        self._c.stoch_size, self._c.deter_size, self._c.deter_size,
+        model=self._c.rssm_model,
+        pre_lnorm=self._c.pre_lnorm, gate=self._c.gate,
+        n_layer=self._c.n_layer, n_head=self._c.n_head, mem_len=self._c.mem_len)
     self._decode = models.ConvDecoder(self._c.cnn_depth, cnn_act)
     self._reward = models.DenseDecoder((), 2, self._c.num_units, act=act)
     if self._c.pcont:

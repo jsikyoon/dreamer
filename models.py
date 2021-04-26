@@ -5,25 +5,61 @@ from tensorflow_probability import distributions as tfd
 from tensorflow.keras.mixed_precision import experimental as prec
 
 import tools
+from trxls import TrXL
 
 
 class RSSM(tools.Module):
 
-  def __init__(self, stoch=30, deter=200, hidden=200, act=tf.nn.elu):
+  def __init__(self, stoch=30, deter=200, hidden=200, act=tf.nn.elu,
+    model='trxl',
+    pre_lnorm=False, gate='plus',
+    n_layer=2, n_head=10, mem_len=64):
     super().__init__()
     self._activation = act
     self._stoch_size = stoch
     self._deter_size = deter
     self._hidden_size = hidden
-    self._cell = tfkl.GRUCell(self._deter_size)
+
+    # memory module
+    self._model = model
+    self._deter = deter
+    self._n_layer = n_layer
+    self._mem_len = mem_len
+    self._num_var = n_layer * mem_len * deter
+
+    assert model in ['gru', 'trxl']
+
+    if self._model=='gru':
+      self._cell = tfkl.GRUCell(self._deter_size)
+    else:
+      self._cell = TrXL(pre_lnorm=pre_lnorm,
+                        gate=gate,
+                        n_layer=n_layer,
+                        d_model=deter,
+                        n_head=n_head,
+                        d_head=deter//n_head,
+                        d_inner=deter,
+                        mem_len=mem_len)
 
   def initial(self, batch_size):
     dtype = prec.global_policy().compute_dtype
+    if self._model=='gru':
+      deter = self._cell.get_initial_state(None, batch_size, dtype)
+    else:
+      deter = tf.zeros([self._n_layer,
+                        self._mem_len,
+                        batch_size,
+                        self._deter], dtype)
+      deter = tf.transpose(deter, perm=[2,1,0,3])
+      deter = tf.reshape(deter, [deter.shape[0], -1])
+      deter = tf.concat([tf.zeros([batch_size, self._deter], dtype),
+                         deter],
+                        axis=-1)
     return dict(
         mean=tf.zeros([batch_size, self._stoch_size], dtype),
         std=tf.zeros([batch_size, self._stoch_size], dtype),
         stoch=tf.zeros([batch_size, self._stoch_size], dtype),
-        deter=self._cell.get_initial_state(None, batch_size, dtype))
+        deter=deter)
 
   @tf.function
   def observe(self, embed, action, state=None):
@@ -49,7 +85,12 @@ class RSSM(tools.Module):
     return prior
 
   def get_feat(self, state):
-    return tf.concat([state['stoch'], state['deter']], -1)
+    if self._model=='gru':
+      return tf.concat([state['stoch'], state['deter']], -1)
+    else:
+      deter = tf.split(state['deter'],
+                       [self._deter, self._num_var], axis=-1)[0]
+      return tf.concat([state['stoch'], deter], -1)
 
   def get_dist(self, state):
     return tfd.MultivariateNormalDiag(state['mean'], state['std'])
@@ -57,7 +98,12 @@ class RSSM(tools.Module):
   @tf.function
   def obs_step(self, prev_state, prev_action, embed):
     prior = self.img_step(prev_state, prev_action)
-    x = tf.concat([prior['deter'], embed], -1)
+    if self._model=='gru':
+      x = tf.concat([prior['deter'], embed], -1)
+    else:
+      deter = tf.split(prior['deter'],
+                       [self._deter, self._num_var], axis=-1)[0]
+      x = tf.concat([deter, embed], -1)
     x = self.get('obs1', tfkl.Dense, self._hidden_size, self._activation)(x)
     x = self.get('obs2', tfkl.Dense, 2 * self._stoch_size, None)(x)
     mean, std = tf.split(x, 2, -1)
@@ -70,8 +116,20 @@ class RSSM(tools.Module):
   def img_step(self, prev_state, prev_action):
     x = tf.concat([prev_state['stoch'], prev_action], -1)
     x = self.get('img1', tfkl.Dense, self._hidden_size, self._activation)(x)
-    x, deter = self._cell(x, [prev_state['deter']])
-    deter = deter[0]  # Keras wraps the state in a list.
+    if self._model=='gru':
+      x, deter = self._cell(x, [prev_state['deter']])
+      deter = deter[0]  # Keras wraps the state in a list.
+    else:
+      deter = tf.split(prev_state['deter'],
+                       [self._deter, self._num_var], axis=-1)[1]
+      deter = tf.reshape(deter, [deter.shape[0], self._mem_len,
+                                 self._n_layer, self._deter])
+      deter = tf.transpose(deter, perm=[2,1,0,3])
+      x, deter = self._cell(dec_inp=tf.expand_dims(x, axis=0),
+                            mems=deter)
+      deter = tf.transpose(deter, perm=[2,1,0,3])
+      deter = tf.reshape(deter, [deter.shape[0], -1])
+      deter = tf.concat([x, deter], axis=-1)
     x = self.get('img2', tfkl.Dense, self._hidden_size, self._activation)(x)
     x = self.get('img3', tfkl.Dense, 2 * self._stoch_size, None)(x)
     mean, std = tf.split(x, 2, -1)
