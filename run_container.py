@@ -8,7 +8,7 @@ from datetime import datetime
 img_name = 'dreamer:dmlab'
 
 ## gpu
-gpu_ids = ['5']
+gpu_ids = ['4']
 
 ###############################################################################
 # Volumn options

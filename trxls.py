@@ -116,16 +116,18 @@ class PositionwiseFF(tools.Module):
 
     self._layer_norm = tfkl.LayerNormalization(axis=-1)
 
-    self._layer1 = tfkl.Dense(d_inner, activation=tf.nn.relu,
+    self._layer1 = tfkl.Dense(d_inner, activation='relu',
                               kernel_initializer=kernel_initializer,
                               name='layer_1')
-    self._drop1 = tfkl.Dropout(dropout, name='drop_1')
+    #self._drop1 = tfkl.Dropout(dropout, name='drop_1')
     self._layer2 = tfkl.Dense(d_model,
                               kernel_initializer=kernel_initializer,
                               name='layer_2')
-    self._drop2 = tfkl.Dropout(dropout, name='drop_2')
+    #self._drop2 = tfkl.Dropout(dropout, name='drop_2')
 
     self._gate = Gate(d_model, kernel_initializer, gate)
+
+    self._relu = tfkl.ReLU()
 
   def __call__(self, inp, is_training=True):
 
@@ -135,14 +137,14 @@ class PositionwiseFF(tools.Module):
       output = inp
 
     output = self._layer1(output)
-    output = self._drop1(output)
+    #output = self._drop1(output)
     output = self._layer2(output)
-    output = self._drop2(output)
+    #output = self._drop2(output)
 
     if not self._pre_lnorm:
-      output = self._layer_norm(output)
+      output = self._layer_norm(output + inp)
     else:
-      output = self._gate(output, inp)
+      output = self._gate(self._relu(output), inp)
 
     return output
 
@@ -168,14 +170,16 @@ class RelMultiheadAttn(tools.Module):
     self._r_head_k = tfkl.Dense(n_head * d_head, use_bias=False,
                                 kernel_initializer=kernel_initializer, name='r')
 
-    self._dropatt = tfkl.Dropout(dropatt)
+    #self._dropatt = tfkl.Dropout(dropatt)
 
     self._attn_out = tfkl.Dense(d_model, use_bias=False,
                                kernel_initializer=kernel_initializer,name='o')
 
-    self._dropout = tfkl.Dropout(dropout)
+    #self._dropout = tfkl.Dropout(dropout)
 
     self._gate = Gate(d_model, kernel_initializer, gate)
+
+    self._relu = tfkl.ReLU()
 
 
   def _rel_shift(self, x):
@@ -231,19 +235,19 @@ class RelMultiheadAttn(tools.Module):
     attn_score = attn_score * (1 - attn_mask_t) - 1e30 * attn_mask_t
 
     attn_prob = tf.nn.softmax(attn_score, 1)
-    attn_prob = self._dropatt(attn_prob, training=is_training)
+    #attn_prob = self._dropatt(attn_prob, training=is_training)
 
     attn_vec = tf.einsum('ijbn,jbnd->ibnd', attn_prob, w_head_v)
     size_t = attn_vec.shape
     attn_vec = tf.reshape(attn_vec, [size_t[0], -1, self._n_head * self._d_head])
 
     attn_out = self._attn_out(attn_vec)
-    attn_out = self._dropout(attn_out, training=is_training)
+    #attn_out = self._dropout(attn_out, training=is_training)
 
     if not self._pre_lnorm:
       output = self._layer_norm(attn_out + inp)
     else:
-      output = self._gate(attn_out, inp)
+      output = self._gate(self._relu(attn_out), inp)
 
     return output
 
@@ -276,12 +280,12 @@ class TrXL(tools.Module):
     if init == 'uniform':
       initializer = tf.keras.initializers.RandomUniform(
             minval=-init_range,
-            maxval=init_range,
-            seed=seed)
+            maxval=init_range)
+            #seed=seed) # without seed
     elif init == "normal":
       initializer = tf.keras.initializers.RandomNormal(
-            stddev=init_std,
-            seed=seed)
+            stddev=init_std)
+            #seed=seed)  # without seed
 
     new_mems = []
     dtype = prec.global_policy().variable_dtype
@@ -309,10 +313,9 @@ class TrXL(tools.Module):
     if clamp_len > 0:
       pos_seq = tf.minimum(pos_seq, clamp_len)
     inv_freq = 1 / (10000 ** (tf.range(0, d_model, 2.0) / d_model))
-    #self._pos_emb = tf.cast(self._positional_embedding(pos_seq, inv_freq))
     self._pos_emb = self._positional_embedding(pos_seq, inv_freq)
 
-    self._dropout = tfkl.Dropout(dropout)
+    #self._dropout = tfkl.Dropout(dropout)
 
     self._attn_layers = []
     self._ff_layers = []
@@ -333,7 +336,6 @@ class TrXL(tools.Module):
             kernel_initializer=initializer,
             pre_lnorm=pre_lnorm,
             gate=gate))
-
 
   def _create_mask(self, qlen, mlen, same_length=False):
 
@@ -375,8 +377,10 @@ class TrXL(tools.Module):
 
     new_mems = []
 
-    output = self._dropout(dec_inp, training=is_training)
-    pos_emb = self._dropout(self._pos_emb, training=is_training)
+    output = dec_inp
+    pos_emb = self._pos_emb
+    #output = self._dropout(dec_inp, training=is_training)
+    #pos_emb = self._dropout(self._pos_emb, training=is_training)
 
     for i in range(self._n_layer):
       # cache new mems
@@ -394,7 +398,7 @@ class TrXL(tools.Module):
                       is_training=is_training)
 
 
-    output = self._dropout(output, training=is_training)
+    #output = self._dropout(output, training=is_training)
 
     return tf.reshape(output, [-1, output.shape[-1]]), \
            tf.stack(new_mems, axis=0)

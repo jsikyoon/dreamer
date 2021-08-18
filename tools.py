@@ -51,8 +51,8 @@ def nest_summary(structure):
   return '?'
 
 
-def graph_summary(writer, fn, *args):
-  step = tf.summary.experimental.get_step()
+def graph_summary(writer, fn, step, *args):
+  #step = tf.summary.experimental.get_step()
   def inner(*args):
     tf.summary.experimental.set_step(step)
     with writer.as_default():

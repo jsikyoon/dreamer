@@ -32,7 +32,8 @@ def define_config():
   config.seed = 0
   config.steps = 5e6
   config.eval_every = 1e4
-  config.log_every = 1e3
+  config.scalar_log_every = 1e3
+  config.image_log_every = 1e4
   config.log_scalars = True
   config.log_images = True
   config.gpu_growth = True
@@ -103,7 +104,8 @@ class Dreamer(tools.Module):
       self._step = tf.Variable(count_steps(datadir, config), dtype=tf.int64)
     self._should_pretrain = tools.Once()
     self._should_train = tools.Every(config.train_every)
-    self._should_log = tools.Every(config.log_every)
+    self._should_scalar_log = tools.Every(config.scalar_log_every)
+    self._should_image_log = tools.Every(config.image_log_every)
     self._last_log = None
     self._last_time = time.time()
     self._metrics = collections.defaultdict(tf.metrics.Mean)
@@ -122,14 +124,15 @@ class Dreamer(tools.Module):
       mask = tf.cast(1 - reset, self._float)[:, None]
       state = tf.nest.map_structure(lambda x: x * mask, state)
     if self._should_train(step):
-      log = self._should_log(step)
+      scalar_log = self._should_scalar_log(step)
+      image_log = self._should_image_log(step)
       n = self._c.pretrain if self._should_pretrain() else self._c.train_steps
       print(f'Training for {n} steps.')
       with self._strategy.scope():
         for train_step in range(n):
-          log_images = self._c.log_images and log and train_step == 0
-          self.train(next(self._dataset), log_images)
-      if log:
+          log_images = self._c.log_images and image_log and train_step == 0
+          self.train(next(self._dataset), log_images, step)
+      if scalar_log:
         self._write_summaries()
     action, state = self.policy(obs, state, training)
     if training:
@@ -159,10 +162,10 @@ class Dreamer(tools.Module):
     self._should_pretrain()
 
   @tf.function()
-  def train(self, data, log_images=False):
-    self._strategy.experimental_run_v2(self._train, args=(data, log_images))
+  def train(self, data, log_images=False, step=0):
+    self._strategy.experimental_run_v2(self._train, args=(data, log_images, step))
 
-  def _train(self, data, log_images):
+  def _train(self, data, log_images, step):
     with tf.GradientTape() as model_tape:
       embed = self._encode(data)
       post, prior = self._dynamics.observe(embed, data['action'])
@@ -217,7 +220,7 @@ class Dreamer(tools.Module):
             model_loss, value_loss, actor_loss, model_norm, value_norm,
             actor_norm)
       if tf.equal(log_images, True):
-        self._image_summaries(data, embed, image_pred)
+        self._image_summaries(data, embed, image_pred, step)
 
   def _build_model(self):
     acts = dict(
@@ -308,18 +311,20 @@ class Dreamer(tools.Module):
     self._metrics['actor_loss'].update_state(actor_loss)
     self._metrics['action_ent'].update_state(self._actor(feat).entropy())
 
-  def _image_summaries(self, data, embed, image_pred):
-    truth = data['image'][:6] + 0.5
-    recon = image_pred.mode()[:6]
-    init, _ = self._dynamics.observe(embed[:6, :5], data['action'][:6, :5])
+  def _image_summaries(self, data, embed, image_pred, step):
+    n_samples = 6
+    obs_step = max(self._c.batch_length//10, 2)
+    truth = data['image'][:n_samples] + 0.5
+    recon = image_pred.mode()[:n_samples]
+    init, _ = self._dynamics.observe(embed[:n_samples, :obs_step], data['action'][:n_samples, :obs_step])
     init = {k: v[:, -1] for k, v in init.items()}
-    prior = self._dynamics.imagine(data['action'][:6, 5:], init)
+    prior = self._dynamics.imagine(data['action'][:n_samples, obs_step:], init)
     openl = self._decode(self._dynamics.get_feat(prior)).mode()
-    model = tf.concat([recon[:, :5] + 0.5, openl + 0.5], 1)
+    model = tf.concat([recon[:, :obs_step] + 0.5, openl + 0.5], 1)
     error = (model - truth + 1) / 2
     openl = tf.concat([truth, model, error], 2)
     tools.graph_summary(
-        self._writer, tools.video_summary, 'agent/openl', openl)
+        self._writer, tools.video_summary, step, 'agent/openl', openl)
 
   def _write_summaries(self):
     step = int(self._step.numpy())
